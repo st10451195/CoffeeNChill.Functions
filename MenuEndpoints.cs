@@ -104,5 +104,87 @@ namespace CoffeeNChill.Functions
             await response.WriteAsJsonAsync(items);
             return response;
         }
+
+        // 4. PUT /api/menu/{category}/{id} - Updates price or availability
+        [Function("UpdateMenuItem")]
+        public async Task<HttpResponseData> UpdateMenuItem(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "menu/{category}/{id}")] HttpRequestData req,
+            string category,
+            string id)
+        {
+            _logger.LogInformation("Updating menu item {Id} in {Category}", id, category);
+
+            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            var dto = JsonSerializer.Deserialize<UpdateMenuItemDto>(requestBody, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (dto == null || (dto.Price == null && dto.IsAvailable == null))
+            {
+                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                await badResponse.WriteStringAsync("Request body must contain 'price' or 'isAvailable' to update.");
+                return badResponse;
+            }
+
+            try
+            {
+                // Fetch the existing entity using PartitionKey and RowKey
+                var existingEntity = await _tableClient.GetEntityAsync<MenuItemEntity>(category, id);
+                var item = existingEntity.Value;
+
+                if (dto.Price.HasValue)
+                {
+                    if (dto.Price < 0)
+                    {
+                        var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                        await badResponse.WriteStringAsync("Price cannot be negative.");
+                        return badResponse;
+                    }
+                    item.Price = dto.Price.Value;
+                }
+
+                if (dto.IsAvailable.HasValue)
+                {
+                    item.IsAvailable = dto.IsAvailable.Value;
+                }
+
+                // Update entity in Azure Table Storage
+                await _tableClient.UpdateEntityAsync(item, item.ETag, TableUpdateMode.Replace);
+
+                var response = req.CreateResponse(HttpStatusCode.OK);
+                await response.WriteAsJsonAsync(item);
+                return response;
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+            {
+                var notFoundResponse = req.CreateResponse(HttpStatusCode.NotFound);
+                await notFoundResponse.WriteStringAsync($"Item with SKU '{id}' in category '{category}' was not found.");
+                return notFoundResponse;
+            }
+        }
+
+        // 5. DELETE /api/menu/{category}/{id} - Removes an item from the menu
+        [Function("DeleteMenuItem")]
+        public async Task<HttpResponseData> DeleteMenuItem(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "menu/{category}/{id}")] HttpRequestData req,
+            string category,
+            string id)
+        {
+            _logger.LogInformation("Deleting menu item {Id} in {Category}", id, category);
+
+            try
+            {
+                // Verify existence first so we can return a proper 404 if it does not exist
+                var existingEntity = await _tableClient.GetEntityAsync<MenuItemEntity>(category, id);
+
+                await _tableClient.DeleteEntityAsync(category, id, existingEntity.Value.ETag);
+
+                return req.CreateResponse(HttpStatusCode.NoContent);
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+            {
+                var notFoundResponse = req.CreateResponse(HttpStatusCode.NotFound);
+                await notFoundResponse.WriteStringAsync($"Item with SKU '{id}' in category '{category}' was not found.");
+                return notFoundResponse;
+            }
+        }
     }
 }
