@@ -1,20 +1,24 @@
-using Azure.Monitor.OpenTelemetry.Exporter;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Builder;
-using Microsoft.Azure.Functions.Worker.OpenTelemetry;
+using Azure.Data.Tables;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using OpenTelemetry;
 
-var builder = FunctionsApplication.CreateBuilder(args);
+var host = new HostBuilder()
+    .ConfigureFunctionsWebApplication()
+    .ConfigureServices(services =>
+    {
+        // Connect to local Azurite container via development storage string
+        string connectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage")
+            ?? "UseDevelopmentStorage=true";
 
-builder.ConfigureFunctionsWebApplication();
+        // Register TableClient for the 'MenuItems' table as a singleton
+        services.AddSingleton(sp =>
+        {
+            var tableServiceClient = new TableServiceClient(connectionString);
+            var tableClient = tableServiceClient.GetTableClient("MenuItems");
+            tableClient.CreateIfNotExists();
+            return tableClient;
+        });
+    })
+    .Build();
 
-if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING")))
-{
-    builder.Services.AddOpenTelemetry()
-        .UseFunctionsWorkerDefaults()
-        .UseAzureMonitorExporter();
-}
-
-builder.Build().Run();
+host.Run();
