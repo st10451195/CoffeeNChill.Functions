@@ -74,5 +74,35 @@ namespace CoffeeNChill.Functions
             await response.WriteAsJsonAsync(items);
             return response;
         }
+
+    // GET /api/menu/category/{category} - Filters entities by PartitionKey
+        [Function("GetMenuItemsByCategory")]
+        public async Task<HttpResponseData> GetMenuItemsByCategory(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "menu/category/{category}")] HttpRequestData req,
+            string category)
+        {
+            _logger.LogInformation("Retrieving menu items for category: {Category}", category);
+
+            if (string.IsNullOrWhiteSpace(category))
+            {
+                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                await badResponse.WriteStringAsync("Category route parameter is required.");
+                return badResponse;
+            }
+
+            var items = new List<MenuItemEntity>();
+
+            // Build an OData query filter matching PartitionKey exactly
+            string filter = TableClient.CreateQueryFilter($"PartitionKey eq {category}");
+
+            await foreach (var item in _tableClient.QueryAsync<MenuItemEntity>(filter))
+            {
+                items.Add(item);
+            }
+
+            var response = req.CreateResponse(HttpStatusCode.OK);
+            await response.WriteAsJsonAsync(items);
+            return response;
+        }
     }
 }
